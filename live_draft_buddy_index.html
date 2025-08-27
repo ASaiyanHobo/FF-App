@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Draft Buddy</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <meta name="description" content="A lightweight, client‑side fantasy draft companion you can run during a live draft. Paste tiers (ESPN / Fantasy Footballers), track picks, snake logic, export/import." />
+  <style>
+    /* Simple cell truncation */
+    .cell { @apply whitespace-nowrap overflow-hidden text-ellipsis; }
+    .scrollbar::-webkit-scrollbar { height: 10px; width: 10px; }
+    .scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+    .scrollbar::-webkit-scrollbar-track { background: #e2e8f0; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-[1400px] mx-auto p-4 md:p-6">
+    <!-- Header -->
+    <header class="flex items-center justify-between gap-3">
+      <div>
+        <h1 class="text-2xl md:text-3xl font-bold">Live Draft Buddy</h1>
+        <p class="text-sm text-slate-600">Paste tiers from Fantasy Footballers / ESPN, then draft in real‑time. Everything is local to your browser.</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="btnDemo" class="px-3 py-2 rounded-xl bg-indigo-600 text-white shadow hover:shadow-md">Load Demo Data</button>
+        <button id="btnReset" class="px-3 py-2 rounded-xl bg-white border border-slate-300 shadow hover:shadow-md">Reset</button>
+        <button id="btnExport" class="px-3 py-2 rounded-xl bg-white border border-slate-300 shadow hover:shadow-md">Export</button>
+        <label class="px-3 py-2 rounded-xl bg-white border border-slate-300 shadow hover:shadow-md cursor-pointer">
+          Import <input id="fileImport" type="file" accept="application/json" class="hidden" />
+        </label>
+      </div>
+    </header>
+
+    <!-- Controls -->
+    <section class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+      <!-- League Settings -->
+      <div class="bg-white rounded-2xl shadow p-4 space-y-3">
+        <h2 class="font-semibold">League Settings</h2>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="text-sm">Teams
+            <input id="numTeams" type="number" min="2" max="20" value="12" class="mt-1 w-full rounded-lg border p-2">
+          </label>
+          <label class="text-sm">Rounds
+            <input id="numRounds" type="number" min="1" max="24" value="16" class="mt-1 w-full rounded-lg border p-2">
+          </label>
+          <label class="flex items-center gap-2 text-sm col-span-2">
+            <input id="isSnake" type="checkbox" checked class="rounded"> Snake draft
+          </label>
+          <label class="text-sm col-span-2">Draft Clock (optional)
+            <input id="pickSeconds" type="number" min="0" value="0" class="mt-1 w-full rounded-lg border p-2" placeholder="Seconds per pick; 0 = off" />
+          </label>
+        </div>
+        <p class="text-xs text-slate-500">Settings changes rebuild the board. Team names persist.</p>
+      </div>
+
+      <!-- Team Names -->
+      <div class="bg-white rounded-2xl shadow p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <h2 class="font-semibold">Teams</h2>
+          <button id="btnRandomizeOrder" class="text-sm px-2 py-1 rounded-lg bg-slate-100 border">Randomize Order</button>
+        </div>
+        <div id="teamNames" class="grid grid-cols-2 md:grid-cols-3 gap-2"></div>
+      </div>
+
+      <!-- Importers -->
+      <div class="bg-white rounded-2xl shadow p-4 space-y-3">
+        <h2 class="font-semibold">Paste Tiers</h2>
+        <p class="text-xs text-slate-600">Paste CSV/TSV w/ headers like: <span class="font-mono">Name,Pos,Team,Tier,ADP</span>. Sources: Fantasy Footballers, ESPN. We merge by name.</p>
+        <textarea id="pasteArea" class="w-full h-28 rounded-lg border p-2 font-mono text-xs" placeholder="Paste CSV/TSV here..."></textarea>
+        <div class="flex items-center gap-2">
+          <button id="btnParse" class="px-3 py-2 rounded-xl bg-emerald-600 text-white shadow hover:shadow-md">Add to Pool</button>
+          <button id="btnClearPool" class="px-3 py-2 rounded-xl bg-white border">Clear Pool</button>
+        </div>
+        <details class="text-xs text-slate-600">
+          <summary class="cursor-pointer select-none">CSV tip</summary>
+          <div class="mt-1 font-mono">
+Name,Pos,Team,Tier,ADP
+Justin Jefferson,WR,MIN,1,3.4
+Christian McCaffrey,RB,SF,1,1.2
+Josh Allen,QB,BUF,3,23.1
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <!-- Main layout -->
+    <section class="mt-4 grid grid-cols-1 xl:grid-cols-12 gap-4">
+      <!-- Player Pool -->
+      <div class="xl:col-span-4 bg-white rounded-2xl shadow p-4 flex flex-col min-h-[480px]">
+        <div class="flex items-center gap-2">
+          <input id="search" placeholder="Search players..." class="flex-1 rounded-lg border p-2" />
+          <select id="filterPos" class="rounded-lg border p-2">
+            <option value="">All</option>
+            <option>QB</option>
+            <option>RB</option>
+            <option>WR</option>
+            <option>TE</option>
+            <option>FLEX</option>
+            <option>K</option>
+            <option>D/ST</option>
+          </select>
+          <label class="text-sm flex items-center gap-2"><input id="chkAvail" type="checkbox" class="rounded" checked> Available</label>
+        </div>
+        <div class="mt-3 overflow-auto grow rounded-xl border scrollbar">
+          <table class="min-w-full text-sm">
+            <thead class="sticky top-0 bg-slate-100 text-slate-700">
+              <tr>
+                <th class="text-left p-2">Tier</th>
+                <th class="text-left p-2">Name</th>
+                <th class="text-left p-2">Pos</th>
+                <th class="text-left p-2">Team</th>
+                <th class="text-left p-2">ADP</th>
+                <th class="text-left p-2">Src</th>
+                <th class="text-right p-2">Action</th>
+              </tr>
+            </thead>
+            <tbody id="poolBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Draft Board -->
+      <div class="xl:col-span-6 bg-white rounded-2xl shadow p-4 min-h-[480px] overflow-hidden">
+        <div class="flex items-center justify-between">
+          <h2 class="font-semibold">Draft Board</h2>
+          <div class="flex items-center gap-2 text-sm">
+            <span id="clock" class="px-2 py-1 rounded-lg bg-slate-100">⏱️ 00:00</span>
+            <button id="btnUndo" class="px-2 py-1 rounded-lg bg-slate-100 border">Undo</button>
+            <button id="btnRedo" class="px-2 py-1 rounded-lg bg-slate-100 border">Redo</button>
+          </div>
+        </div>
+        <div class="mt-3 overflow-auto rounded-xl border scrollbar" id="boardWrap">
+          <table class="min-w-[800px] text-xs">
+            <thead class="bg-slate-100 sticky top-0 z-10">
+              <tr id="teamHeader"><th class="p-2 text-left">Rnd</th></tr>
+            </thead>
+            <tbody id="boardBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Active Pick / Quick Draft -->
+      <div class="xl:col-span-2 bg-white rounded-2xl shadow p-4 space-y-3">
+        <h2 class="font-semibold">Active Pick</h2>
+        <div id="activeInfo" class="p-3 rounded-xl bg-slate-50 border text-sm">Pick info...</div>
+        <div class="space-y-2">
+          <input id="manualName" class="w-full rounded-lg border p-2" placeholder="Type player name & Enter" />
+          <select id="manualTeam" class="w-full rounded-lg border p-2"></select>
+          <select id="manualRound" class="w-full rounded-lg border p-2"></select>
+          <button id="btnDraftManual" class="w-full px-3 py-2 rounded-xl bg-emerald-600 text-white">Draft Player</button>
+          <button id="btnSkip" class="w-full px-3 py-2 rounded-xl bg-white border">Skip to Next</button>
+        </div>
+        <details>
+          <summary class="cursor-pointer select-none text-sm">Roster View</summary>
+          <div id="rosters" class="text-xs mt-2 space-y-2"></div>
+        </details>
+      </div>
+    </section>
+
+    <footer class="text-center text-xs text-slate-500 mt-6">No server. Your data lives in localStorage. Export before you close if you want a file copy.</footer>
+  </div>
+
+  <script>
+  /******************** State ********************/
+  const STORAGE_KEY = 'live-draft-buddy-v1';
+
+  const state = {
+    teams: 12,
+    rounds: 16,
+    snake: true,
+    pickSeconds: 0,
+    teamNames: [],
+    players: [],        // pool [{id,name,pos,team,tier,adp,source,taken:false}]
+    board: [],          // 2D [round][team] -> {name,pos,team}
+    history: [],        // stack of actions for undo
+    future: [],         // stack of undone actions for redo
+    currentIndex: 0,    // 0..(rounds*teams-1)
+    clock: 0,           // seconds remaining on pick
+    timerId: null,
+  };
+
+  const el = {
+    numTeams: document.getElementById('numTeams'),
+    numRounds: document.getElementById('numRounds'),
+    isSnake: document.getElementById('isSnake'),
+    pickSeconds: document.getElementById('pickSeconds'),
+    teamNames: document.getElementById('teamNames'),
+    pasteArea: document.getElementById('pasteArea'),
+    btnParse: document.getElementById('btnParse'),
+    btnClearPool: document.getElementById('btnClearPool'),
+    search: document.getElementById('search'),
+    filterPos: document.getElementById('filterPos'),
+    chkAvail: document.getElementById('chkAvail'),
+    poolBody: document.getElementById('poolBody'),
+    boardWrap: document.getElementById('boardWrap'),
+    teamHeader: document.getElementById('teamHeader'),
+    boardBody: document.getElementById('boardBody'),
+    manualName: document.getElementById('manualName'),
+    manualTeam: document.getElementById('manualTeam'),
+    manualRound: document.getElementById('manualRound'),
+    btnDraftManual: document.getElementById('btnDraftManual'),
+    btnSkip: document.getElementById('btnSkip'),
+    btnUndo: document.getElementById('btnUndo'),
+    btnRedo: document.getElementById('btnRedo'),
+    btnExport: document.getElementById('btnExport'),
+    fileImport: document.getElementById('fileImport'),
+    btnReset: document.getElementById('btnReset'),
+    btnDemo: document.getElementById('btnDemo'),
+    clock: document.getElementById('clock'),
+    activeInfo: document.getElementById('activeInfo'),
+    rosters: document.getElementById('rosters'),
+    btnRandomizeOrder: document.getElementById('btnRandomizeOrder'),
+  };
+
+  /******************** Utils ********************/
+  const uid = () => Math.random().toString(36).slice(2, 9);
+
+  function save() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+  function load() {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    try {
+      const data = JSON.parse(raw);
+      Object.assign(state, data);
+      return true;
+    } catch { return false; }
+  }
+  function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+
+  function rebuildBoard() {
+    state.board = Array.from({length: state.rounds}, () => Array(state.teams).fill(null));
+    state.history = []; state.future = []; state.currentIndex = 0; stopClock();
+    renderAll(); save();
+  }
+
+  function currentRound() { return Math.floor(state.currentIndex / state.teams); }
+  function pickWithinRound() { return state.currentIndex % state.teams; }
+  function teamForPick(round, pick) {
+    if (!state.snake) return pick; // straight draft
+    return (round % 2 === 0) ? pick : (state.teams - 1 - pick);
+  }
+  function activeTeamIndex() {
+    return teamForPick(currentRound(), pickWithinRound());
+  }
+
+  function nextPick() {
+    if (state.currentIndex < state.rounds * state.teams - 1) {
+      state.currentIndex++;
+      restartClock();
+    }
+  }
+  function prevPick() {
+    if (state.currentIndex > 0) state.currentIndex--;
+  }
+
+  function startClock() {
+    stopClock();
+    if (state.pickSeconds > 0) {
+      state.clock = state.pickSeconds;
+      el.clock.textContent = `⏱️ ${formatClock(state.clock)}`;
+      state.timerId = setInterval(() => {
+        state.clock--; el.clock.textContent = `⏱️ ${formatClock(state.clock)}`;
+        if (state.clock <= 0) { stopClock(); }
+      }, 1000);
+    } else {
+      el.clock.textContent = '⏱️ 00:00';
+    }
+  }
+  function restartClock(){ startClock(); }
+  function stopClock(){ if (state.timerId) { clearInterval(state.timerId); state.timerId = null; } }
+  function formatClock(s){ const m = Math.floor(s/60).toString().padStart(2,'0'); const ss=(s%60).toString().padStart(2,'0'); return `${m}:${ss}`; }
+
+  /******************** Rendering ********************/
+  function renderTeams() {
+    // team name inputs
+    el.teamNames.innerHTML = '';
+    ensureTeamNames();
+    for (let i=0;i<state.teams;i++) {
+      const input = document.createElement('input');
+      input.value = state.teamNames[i] || `Team ${i+1}`;
+      input.className = 'rounded-lg border p-2 text-sm';
+      input.addEventListener('change', () => { state.teamNames[i] = input.value.trim() || `Team ${i+1}`; renderBoardHeader(); renderRosters(); save(); });
+      el.teamNames.appendChild(input);
+    }
+    // manual pick selectors
+    el.manualTeam.innerHTML = '';
+    for (let i=0;i<state.teams;i++) {
+      const opt = document.createElement('option');
+      opt.value = i; opt.textContent = state.teamNames[i] || `Team ${i+1}`;
+      el.manualTeam.appendChild(opt);
+    }
+    el.manualRound.innerHTML = '';
+    for (let r=0;r<state.rounds;r++) {
+      const opt = document.createElement('option'); opt.value = r; opt.textContent = `Round ${r+1}`; el.manualRound.appendChild(opt);
+    }
+  }
+
+  function renderBoardHeader() {
+    el.teamHeader.innerHTML = '<th class="p-2 text-left">Rnd</th>' + Array.from({length: state.teams}, (_,i)=>`<th class="p-2 text-left">${escapeHtml(state.teamNames[i]||`Team ${i+1}`)}</th>`).join('');
+  }
+
+  function renderBoardBody() {
+    el.boardBody.innerHTML = '';
+    for (let r=0;r<state.rounds;r++) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td class="p-2 font-medium">${r+1}</td>` +
+        Array.from({length: state.teams}, (_,t)=>{
+          const pickTeam = teamForPick(r, t);
+          const cell = state.board[r][pickTeam];
+          const isActive = (r===currentRound() && pickWithinRound()===t);
+          return `<td data-r="${r}" data-t="${pickTeam}" class="p-2 align-top">
+            <div class="rounded-xl border p-2 h-16 ${isActive?'ring-2 ring-indigo-500':''}">
+              <div class="text-[10px] text-slate-500">Pick ${r*state.teams + (t+1)}</div>
+              ${cell ? renderPick(cell) : '<div class="text-slate-400 text-xs">—</div>'}
+            </div>
+          </td>`;
+        }).join('');
+      el.boardBody.appendChild(tr);
+    }
+    // cell click to focus manual selectors
+    el.boardBody.querySelectorAll('td').forEach(td=>{
+      td.addEventListener('click',()=>{
+        const r = Number(td.getAttribute('data-r'));
+        const t = Number(td.getAttribute('data-t'));
+        el.manualRound.value = r; el.manualTeam.value = t;
+      });
+    });
+  }
+
+  function renderPick(cell){
+    const name = escapeHtml(cell.name);
+    const pos = escapeHtml(cell.pos||'');
+    const team = escapeHtml(cell.team||'');
+    return `<div class="cell font-medium">${name}</div><div class="text-[11px] text-slate-600">${pos} • ${team}</div>`;
+  }
+
+  function renderPool() {
+    const q = el.search.value.trim().toLowerCase();
+    const pos = el.filterPos.value;
+    const onlyAvail = el.chkAvail.checked;
+
+    const rows = state.players
+      .filter(p => (!onlyAvail || !p.taken))
+      .filter(p => !pos || p.pos === pos)
+      .filter(p => !q || (`${p.name} ${p.pos} ${p.team}`).toLowerCase().includes(q))
+      .sort((a,b)=> (a.tier??99)-(b.tier??99) || (a.adp??9999)-(b.adp??9999) || a.name.localeCompare(b.name))
+      .slice(0, 500);
+
+    el.poolBody.innerHTML = '';
+    for (const p of rows) {
+      const tr = document.createElement('tr');
+      tr.className = p.taken ? 'opacity-40' : '';
+      tr.innerHTML = `
+        <td class="p-2">${p.tier ?? ''}</td>
+        <td class="p-2">${escapeHtml(p.name)}</td>
+        <td class="p-2">${escapeHtml(p.pos||'')}</td>
+        <td class="p-2">${escapeHtml(p.team||'')}</td>
+        <td class="p-2">${p.adp ?? ''}</td>
+        <td class="p-2">${escapeHtml(p.source||'')}</td>
+        <td class="p-2 text-right"><button data-id="${p.id}" class="px-2 py-1 text-xs rounded-lg bg-indigo-600 text-white">Draft</button></td>`;
+      el.poolBody.appendChild(tr);
+    }
+    // attach draft handlers
+    el.poolBody.querySelectorAll('button[data-id]').forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        const p = state.players.find(x=>x.id===btn.getAttribute('data-id'));
+        if (!p) return;
+        quickDraft(p);
+      })
+    });
+  }
+
+  function renderActiveInfo(){
+    const r = currentRound();
+    const tWithin = pickWithinRound();
+    const t = activeTeamIndex();
+    const teamName = state.teamNames[t] || `Team ${t+1}`;
+    const pickNum = r * state.teams + tWithin + 1;
+    el.activeInfo.innerHTML = `<div class="text-sm"><span class="font-semibold">Round ${r+1}</span> • <span class="font-semibold">Pick ${pickNum}</span></div><div class="text-slate-600">On the clock: <span class="font-semibold">${escapeHtml(teamName)}</span></div>`;
+    // sync manual selectors to active
+    el.manualRound.value = r; el.manualTeam.value = t;
+  }
+
+  function renderRosters(){
+    const rosters = Array.from({length: state.teams}, ()=>[]);
+    for (let r=0;r<state.rounds;r++) {
+      for (let t=0;t<state.teams;t++) {
+        const cell = state.board[r][t]; if (cell) rosters[t].push(cell);
+      }
+    }
+    const frag = document.createDocumentFragment();
+    for (let t=0;t<state.teams;t++){
+      const div = document.createElement('div');
+      div.innerHTML = `<div class="font-semibold">${escapeHtml(state.teamNames[t]||`Team ${t+1}`)}</div>` +
+        (rosters[t].length ? rosters[t].map(p=>`<div class="text-slate-700">${escapeHtml(p.name)} <span class="text-slate-500">(${escapeHtml(p.pos)}-${escapeHtml(p.team)})</span></div>`).join('') : '<div class="text-slate-500">—</div>');
+      frag.appendChild(div);
+    }
+    el.rosters.innerHTML = ''; el.rosters.appendChild(frag);
+  }
+
+  function renderAll(){
+    el.numTeams.value = state.teams; el.numRounds.value = state.rounds; el.isSnake.checked = state.snake; el.pickSeconds.value = state.pickSeconds;
+    renderTeams();
+    renderBoardHeader();
+    renderBoardBody();
+    renderPool();
+    renderActiveInfo();
+    renderRosters();
+  }
+
+  /******************** Actions ********************/
+  function ensureTeamNames(){
+    if (!Array.isArray(state.teamNames)) state.teamNames = [];
+    while (state.teamNames.length < state.teams) state.teamNames.push(`Team ${state.teamNames.length+1}`);
+    if (state.teamNames.length > state.teams) state.teamNames = state.teamNames.slice(0, state.teams);
+  }
+
+  function addPlayersFromCSV(text, sourceLabel='External') {
+    const parsed = parseCSV(text);
+    const mapped = parsed.map(row=>normalizePlayer(row, sourceLabel)).filter(Boolean);
+    for (const p of mapped) {
+      // merge by lowercased name
+      const idx = state.players.findIndex(x=>x.name.toLowerCase()===p.name.toLowerCase());
+      if (idx === -1) state.players.push(p);
+      else {
+        const cur = state.players[idx];
+        cur.tier = Math.min(cur.tier ?? 99, p.tier ?? 99);
+        cur.adp = Math.min(cur.adp ?? 9999, p.adp ?? 9999);
+        cur.source = cur.source ? `${cur.source},${p.source}` : p.source;
+        cur.pos = cur.pos || p.pos; cur.team = cur.team || p.team;
+      }
+    }
+    save(); renderPool();
+  }
+
+  function normalizePlayer(row, sourceLabel){
+    const name = (row['Name']||row['Player']||row['player']||row['name']||'').trim();
+    if (!name) return null;
+    const pos = (row['Pos']||row['POS']||row['Position']||row['position']||'').toUpperCase().replace('DST','D/ST');
+    const team = (row['Team']||row['team']||'').toUpperCase();
+    const tierRaw = row['Tier']||row['TIER']||row['tier'];
+    const tier = tierRaw!==undefined && tierRaw!=='' ? Number(String(tierRaw).replace(/[^0-9.]/g,'')) : undefined;
+    const adpRaw = row['ADP']||row['Adp']||row['adp'];
+    const adp = adpRaw!==undefined && adpRaw!=='' ? Number(String(adpRaw).replace(/[^0-9.]/g,'')) : undefined;
+    return { id: uid(), name, pos, team, tier, adp, source: sourceLabel, taken: false };
+  }
+
+  function parseCSV(text){
+    // Support CSV or TSV; simple parser (no quoted commas inside quotes handling beyond basic)
+    const sep = text.includes('\t') && !text.includes(',') ? '\t' : ',';
+    const lines = text.split(/\r?\n/).filter(l=>l.trim().length>0);
+    if (!lines.length) return [];
+    const headers = lines[0].split(new RegExp(sep)).map(h=>h.trim());
+    return lines.slice(1).map(line=>{
+      const cols = line.split(new RegExp(sep));
+      const obj = {}; headers.forEach((h,i)=> obj[h] = (cols[i]||'').trim());
+      return obj;
+    });
+  }
+
+  function quickDraft(player){
+    const r = currentRound();
+    const t = activeTeamIndex();
+    placePick(r, t, player);
+  }
+
+  function placePick(r, t, player){
+    if (!player || state.board[r][t]) return;
+    state.board[r][t] = { name: player.name, pos: player.pos, team: player.team, id: player.id };
+    const pIdx = state.players.findIndex(p=>p.id===player.id);
+    if (pIdx>-1) state.players[pIdx].taken = true;
+    state.history.push({ type:'draft', r, t, playerId: player.id });
+    state.future = [];
+    nextPick();
+    save(); renderBoardBody(); renderPool(); renderActiveInfo(); renderRosters();
+  }
+
+  function removePick(r,t){
+    const cell = state.board[r][t]; if (!cell) return;
+    const p = state.players.find(x=>x.id===cell.id); if (p) p.taken=false;
+    state.board[r][t] = null; save();
+  }
+
+  function undo(){
+    const last = state.history.pop(); if (!last) return;
+    if (last.type==='draft'){
+      // roll back currentIndex first
+      prevPick();
+      removePick(last.r, last.t);
+      state.future.push(last);
+    }
+    renderBoardBody(); renderPool(); renderActiveInfo(); renderRosters();
+  }
+  function redo(){
+    const act = state.future.pop(); if (!act) return;
+    if (act.type==='draft'){
+      const p = state.players.find(x=>x.id===act.playerId);
+      placePick(act.r, act.t, p);
+    }
+  }
+
+  function exportJSON(){
+    const data = JSON.stringify(state, null, 2);
+    const blob = new Blob([data], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'draft-state.json'; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importJSON(file){
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const obj = JSON.parse(reader.result);
+        Object.assign(state, obj);
+        // Safety: recompute dimensions
+        state.teams = clamp(Number(state.teams)||12,2,20);
+        state.rounds = clamp(Number(state.rounds)||16,1,24);
+        renderAll(); save();
+      } catch(e){ alert('Invalid JSON'); }
+    };
+    reader.readAsText(file);
+  }
+
+  function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+  function randomizeOrder(){
+    const arr = state.teamNames.slice(0, state.teams).map((name, i)=>({name, i}));
+    for (let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
+    state.teamNames = arr.map(x=>x.name);
+    renderTeams(); renderBoardHeader(); save();
+  }
+
+  /******************** Event Wiring ********************/
+  // Settings
+  el.numTeams.addEventListener('change', ()=>{ state.teams = clamp(Number(el.numTeams.value)||12,2,20); rebuildBoard(); });
+  el.numRounds.addEventListener('change', ()=>{ state.rounds = clamp(Number(el.numRounds.value)||16,1,24); rebuildBoard(); });
+  el.isSnake.addEventListener('change', ()=>{ state.snake = el.isSnake.checked; renderBoardBody(); renderActiveInfo(); save(); });
+  el.pickSeconds.addEventListener('change', ()=>{ state.pickSeconds = Math.max(0, Number(el.pickSeconds.value)||0); restartClock(); save(); });
+  el.btnRandomizeOrder.addEventListener('click', randomizeOrder);
+
+  // Pool
+  el.btnParse.addEventListener('click', ()=>{
+    const text = el.pasteArea.value.trim(); if (!text) return;
+    const src = text.toLowerCase().includes('espn') ? 'ESPN' : (text.toLowerCase().includes('fantasy footballers')||text.toLowerCase().includes('footballers') ? 'Fantasy Footballers' : 'Imported');
+    addPlayersFromCSV(text, src);
+    el.pasteArea.value='';
+  });
+  el.btnClearPool.addEventListener('click', ()=>{ if(confirm('Clear the player pool? Draft board is unaffected.')) { state.players = []; save(); renderPool(); }});
+  el.search.addEventListener('input', renderPool);
+  el.filterPos.addEventListener('change', renderPool);
+  el.chkAvail.addEventListener('change', renderPool);
+
+  // Drafting
+  el.btnDraftManual.addEventListener('click', ()=>{
+    const name = el.manualName.value.trim();
+    const teamIdx = Number(el.manualTeam.value)||0;
+    const r = Number(el.manualRound.value)||0;
+    let p = state.players.find(x=>x.name.toLowerCase()===name.toLowerCase() && !x.taken);
+    if (!p && name) { // create ad-hoc player
+      p = { id: uid(), name, pos: '', team: '', tier: undefined, adp: undefined, source:'Manual', taken:false };
+      state.players.push(p);
+    }
+    placePick(r, teamIdx, p);
+    el.manualName.value='';
+  });
+  el.btnSkip.addEventListener('click', ()=>{ nextPick(); renderBoardBody(); renderActiveInfo(); save(); });
+  el.btnUndo.addEventListener('click', undo);
+  el.btnRedo.addEventListener('click', redo);
+
+  // Export/Import/Reset/Demo
+  el.btnExport.addEventListener('click', exportJSON);
+  el.fileImport.addEventListener('change', (e)=>{ const f=e.target.files[0]; if (f) importJSON(f); e.target.value=''; });
+  el.btnReset.addEventListener('click', ()=>{ if(confirm('Full reset? Clears board, pool, settings.')) { localStorage.removeItem(STORAGE_KEY); location.reload(); }});
+  el.btnDemo.addEventListener('click', ()=>{
+    // tiny demo set
+    const csv = `Name,Pos,Team,Tier,ADP\nChristian McCaffrey,RB,SF,1,1.2\nJustin Jefferson,WR,MIN,1,3.4\nJa'Marr Chase,WR,CIN,1,4.1\nBreece Hall,RB,NYJ,1,5.3\nCeeDee Lamb,WR,DAL,1,2.7\nBijan Robinson,RB,ATL,2,6.9\nAmon-Ra St. Brown,WR,DET,1,6.1\nTravis Kelce,TE,KC,2,15.0\nJosh Allen,QB,BUF,3,23\nJalen Hurts,QB,PHI,3,25`;
+    addPlayersFromCSV(csv, 'Demo');
+  });
+
+  // Cell remove with Alt+Click
+  el.boardBody.addEventListener('click', (e)=>{
+    if (e.altKey) {
+      const td = e.target.closest('td[data-r]'); if (!td) return;
+      const r = Number(td.getAttribute('data-r')); const t = Number(td.getAttribute('data-t'));
+      removePick(r,t); save(); renderBoardBody(); renderPool(); renderRosters();
+    }
+  });
+
+  /******************** Init ********************/
+  function init(){
+    const ok = load();
+    if (!ok) {
+      state.teams = 12; state.rounds = 16; state.snake = true; state.pickSeconds = 0;
+      state.teamNames = Array.from({length: state.teams}, (_,i)=>`Team ${i+1}`);
+      rebuildBoard();
+    } else {
+      // Validate board shape after load
+      state.teams = clamp(Number(state.teams)||12,2,20);
+      state.rounds = clamp(Number(state.rounds)||16,1,24);
+      if (!Array.isArray(state.board) || state.board.length!==state.rounds || state.board[0]?.length!==state.teams) {
+        rebuildBoard();
+      }
+      renderAll();
+    }
+    startClock();
+  }
+
+  init();
+  </script>
+</body>
+</html>
